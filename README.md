@@ -1,3 +1,12 @@
+Camera Server for 10€ ear camera for general purpose repurpose
+
+I first came across a Video on Youtube (can't find it quickly, here a quick version on facebook) https://www.facebook.com/makemagazin.de/videos/ohrenschmalzentferner-als-werkzeug-f%C3%BCr-maker-johannes-hat-ein-ziemlich-ungew%C3%B6hnl/28384355824524247/ from make magazine about repurposing the ear camera for make use. I was hooked, odered two on Amazon and liked them as a tool. What I don't like is closed source chinese Apps. So I googled for opensource apps to get the videostream without the closed source app.
+The upstream repo I forked this from was brilliant, worked directly with my specific camera model
+(//TODO: insert amazon link).
+But I want the camera to be available in my lab network without needing to connect to the wifi hotspot of the camera. So I use an Raspberry pi with a dedicated Wifi USB Stick as a camera server.
+This is what this fork is about :)
+Have fun.
+
 # MJPEG Mirror for Suear "Smart" Ear Cleaners  
 **Author: Sean Pesce**  
 
