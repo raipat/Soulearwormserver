@@ -105,17 +105,36 @@ class SuearDeviceInfo(StructLE):
 
 
 class SuearUdpMsg_StreamChunk(StructLE):
+    """
+    16-byte header in front of every video UDP datagram.
+
+    Layout cross-checked against two independent open-source re-implementations
+    of the vendor's libWifiCamera.so:
+      - alexbrickwedde/otoscope (I4seasonProtocol.kt / FrameAssembler.kt)
+      - TJRSchmidbauer/wifi-otoscope-viewer (suear_struct.py)
+
+    Bytes 6..9 hold a packed 3-axis accelerometer sample ("G-sensor") that the
+    vendor app uses to rotate the picture, valid when bit0 of `flags` is set.
+    See suear_util.accel_xyz() / roll_degrees() for decoding.
+    """
+    ACCEL_FLAG = 0x01
+
     _fields_ = [
-        ('unk1', c_uint8),  # Always 0x01?
-        ('n_chunk', c_uint8),
+        ('packet_type', c_uint8),  # 1 = this 16-byte header (6 = 28-byte header variant, not seen here yet)
+        ('n_chunk', c_uint8),       # Packet sequence number (+1 per datagram)
         ('n_frame', c_uint8),
-        ('last_chunk', c_uint8),  # If 0x01, next message is a new frame
+        ('last_chunk', c_uint8),    # If 0x01, next message is a new frame
         ('total_chunks', c_uint8),  # Zero until last chunk
-        ('unk5', c_uint8),
-        ('position', c_uint16 * 3),  # Possibly position data (i.e., coordinates/rotation)
+        ('flags', c_uint8),         # bit0 = accelerometer sample present
+        ('accel', c_uint32),        # Packed accelerometer sample (see suear_util.accel_xyz)
+        ('mac_tail', c_uint8 * 2),  # Last two bytes of the camera MAC
         ('res_width', c_uint16),   # Video resolution (width)
         ('res_height', c_uint16),  # Video resolution (height)
     ]
+
+    @property
+    def has_accel(self):
+        return bool(self.flags & self.__class__.ACCEL_FLAG)
 
 
 

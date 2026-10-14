@@ -5,6 +5,22 @@ The upstream repo I forked this from was brilliant, worked directly with my spec
 (//TODO: insert amazon link).
 But I want the camera to be available in my lab network without needing to connect to the wifi hotspot of the camera. So I use an Raspberry pi with a dedicated Wifi USB Stick as a camera server.
 This is what this fork is about :)
+And I had claude code clean up the web interface, make it responsible and collect code from different other opensource repos to enable the light and sensor data
+
+## Credits
+
+This fork builds on the work of others and AI assistance. Thank you!
+
+* **[SeanPesce/Suear-Web-Viewer](https://github.com/SeanPesce/Suear-Web-Viewer)** (upstream): original MJPEG mirror, UDP command/stream protocol, device info and license parsing.
+* **[alexbrickwedde/otoscope](https://github.com/alexbrickwedde/otoscope)**: `I4seasonProtocol.kt` / `FrameAssembler.kt`, reverse-engineered from the vendor's `libWifiCamera.so`. Source for the ring light command (`0x000A`, payload layout) and the packed accelerometer format in the video chunk header (bit layout, `atan2(y, z)` roll, 180° mount offset for FBPRO/R1).
+* **[rbeilvert/otoscope](https://github.com/rbeilvert/otoscope)**: Wi-Fi otoscope app; Soulear/i4season support was contributed in [PR #39](https://github.com/rbeilvert/otoscope/pull/39).
+* **[TJRSchmidbauer/wifi-otoscope-viewer](https://github.com/TJRSchmidbauer/wifi-otoscope-viewer)**: independent Python implementation that cross-checks the LED and accelerometer details; idea for deadband + smoothing of the rotation and documented device quirks (e.g. `0x0008` with payload powers the camera off).
+* **[jduanen/EarCam](https://github.com/jduanen/EarCam)**: command table for this device family (cited via TJRSchmidbauer's README).
+* **[damiencorpataux/pymjpeg](https://github.com/damiencorpataux/pymjpeg)**: reference for the HTTP MJPEG stream (via upstream).
+* **[Jonathon Reinhart's ctypes struct helper](https://gist.github.com/JonathonReinhart/b6f355f13021cd8ec5d0101e0e6675b2)**: `ctypes_util.py`.
+
+Web UI, LED/orientation endpoints and `suear_ctl.py` were written with AI assistance (Claude) and tested on real hardware.
+
 Have fun.
 
 # MJPEG Mirror for Suear "Smart" Ear Cleaners  
@@ -44,6 +60,48 @@ A utility for converting [Suear "smart" earwax cleaner](https://play.google.com/
 
 ...and many, many more. Search for "Suear" on [Amazon](https://www.amazon.com/s?k=suear) for more examples.
 
+
+## Web UI, ring light & orientation sensor (this fork)
+
+Open `http://<server>:45100/` for a responsive viewer: large live image, ring light
+on/off (+ brightness slider), auto-rotation from the built-in accelerometer,
+calibrate/mirror/round mask, photo download, fullscreen, battery and device info.
+Keyboard: `L` light, `Space` photo, `R` auto-rotation, `C` calibrate, `M` mirror, `F` fullscreen.
+The page lives in `web/index.html`.
+
+### HTTP API
+
+| Path | Description |
+| --- | --- |
+| `/stream` | MJPEG stream |
+| `/status` | JSON: vendor, model, firmware, serial, SSID, battery, charging, LED state |
+| `/position` | JSON: latest accelerometer sample (`x/y/z` raw counts, `roll`, `slope` in degrees) |
+| `/led`, `/led?on=1&brightness=100`, `/led?on=0` | Read / switch the ring light |
+| `/snapshot` | Latest JPEG frame |
+
+### Command line
+
+```
+python3 suear_ctl.py info
+python3 suear_ctl.py led on        # or: led off / led on 40
+python3 suear_ctl.py sensor 10     # print roll/tilt for 10 s
+```
+
+### Protocol notes
+
+**Ring light** - command `0x000A` on UDP/10005, 3-byte payload `u8 led_id | u8 status | u8 brightness`.
+`led_id` = `0x01` (camera light), OR `0x10` to write. `status` 0 = off, 1 = on (2 = blink, 3 = breathe).
+Read: `01 00 00`, on: `11 01 64`, off: `11 00 00`. The reply echoes the resulting state.
+
+**Orientation sensor** - there is no separate command: every video chunk header carries a packed
+accelerometer sample in bytes 6..9 (`u32`, little endian), valid when bit0 of header byte 5 is set.
+Each axis is a 9-bit magnitude plus sign bit, ~130 counts per g:
+`x` = bits 20..28 / sign 29 (probe axis), `y` = bits 10..18 / sign 19, `z` = bits 0..8 / sign 9.
+Roll = `atan2(y, z)`; the vendor app adds 180° for products whose id contains `FBPRO` or `R1`.
+
+Sources: [alexbrickwedde/otoscope](https://github.com/alexbrickwedde/otoscope) (`I4seasonProtocol.kt`, reverse-engineered from `libWifiCamera.so`),
+[TJRSchmidbauer/wifi-otoscope-viewer](https://github.com/TJRSchmidbauer/wifi-otoscope-viewer), [jduanen/EarCam](https://github.com/jduanen/EarCam).
+Warning from those projects: command `0x0008` with a payload powers the camera off.
 
 ## Usage  
 

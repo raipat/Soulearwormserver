@@ -10,7 +10,11 @@
 
 import html
 import http.server
+import json
+import os
 import queue
+import threading
+import urllib.parse
 import select
 import socket
 import ssl
@@ -20,7 +24,10 @@ import time
 from io import BytesIO
 
 import suear_struct
-from suear_util import ping
+from suear_util import ping, accel_xyz, roll_degrees, slope_degrees, mount_offset_degrees
+
+
+UI_HTML_FPATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web', 'index.html')
 
 
 class HttpHandler(http.server.BaseHTTPRequestHandler):
@@ -53,11 +60,85 @@ class HttpHandler(http.server.BaseHTTPRequestHandler):
         return headers
     
     
+    def send_json(self, obj, status=200):
+        data = json.dumps(obj).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(data)
+
+
     def do_GET(self):
-        print(self.headers['Host'])
+        url = urllib.parse.urlsplit(self.path)
+        query = urllib.parse.parse_qs(url.query)
+        self.path = url.path
         suear_client = self.__class__.SUEAR_CLIENT
-        
-        if self.path not in ('/', '/stream', '/battery', '/model', '/vendor', '/version', '/ssid', '/capacity', '/charging', '/serial'):
+
+        if self.path in ('/', '/index.html'):
+            try:
+                with open(UI_HTML_FPATH, 'rb') as f:
+                    data = f.read()
+            except OSError:
+                self.send_response(500)
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                self.wfile.write(f'UI file missing: {UI_HTML_FPATH}'.encode('utf-8'))
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if self.path in ('/status', '/position', '/led', '/snapshot'):
+            if suear_client is None:
+                self.send_json({'error': 'Suear client unavailable'}, 503)
+                return
+            try:
+                if self.path == '/status':
+                    self.send_json(suear_client.status())
+                elif self.path == '/position':
+                    self.send_json(suear_client.position())
+                elif self.path == '/led':
+                    on = query.get('on', [None])[0]
+                    brightness = query.get('brightness', [None])[0]
+                    if on is None:
+                        state = suear_client.led()
+                    else:
+                        state = suear_client.led(on not in ('0', 'false', 'off'),
+                                                 None if brightness is None else int(brightness))
+                    self.send_json(state)
+                elif self.path == '/snapshot':
+                    jpeg = suear_client.last_jpeg
+                    if jpeg is None:
+                        self.send_json({'error': 'no frame received yet'}, 404)
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Content-Disposition',
+                                     f'inline; filename="suear_{time.strftime("%Y%m%d_%H%M%S")}.jpg"')
+                    self.send_header('Content-Length', str(len(jpeg)))
+                    self.send_header('Connection', 'close')
+                    self.end_headers()
+                    self.wfile.write(jpeg)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception as e:
+                print(f'[ERROR] {self.path}: {type(e).__name__}: {e}')
+                try:
+                    self.send_json({'error': f'{type(e).__name__}: {e}'}, 502)
+                except Exception:
+                    pass
+            return
+
+        if self.path not in ('/stream', '/battery', '/model', '/vendor', '/version', '/ssid', '/capacity', '/charging', '/serial'):
             self.send_response(404)
             self.send_header('Connection', 'close')
             self.end_headers()
@@ -132,49 +213,6 @@ class HttpHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
         
-        elif self.path == '/':
-            html_data =  '<html>\n<head><title>Suear Video Stream Mirror by SeanP</title></head>\n<body>\n'
-            html_data += f'<img src="{self.__class__.PROTOCOL.lower()}://{html.escape(self.headers["Host"])}/stream" >'
-            html_data += f'<p><b>Device:</b> {html.escape(suear_client.vendor)} {html.escape(suear_client.model)} {html.escape(suear_client.version)}\n<br>\n'
-            html_data += f'<b>Serial number:</b> {html.escape(suear_client.serial_num)}\n<br>\n'
-            html_data += f'<b>Battery:</b> <span id="battery_lvl">{html.escape(str(suear_client.battery_level))}</span>%&nbsp;&nbsp;\n'
-            html_data += f'(<span id="is_charging">{"Charging" if suear_client.is_charging else "Not charging"}</span>)</p>\n'
-            html_data += '''
-            <script>
-            function escapeHtml(unsafe) {
-                return unsafe
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/"/g, "&quot;")
-                    .replace(/'/g, "&#039;");
-            }
-            let batteryLvlElem = document.getElementById("battery_lvl");
-            let isChargingElem = document.getElementById("is_charging");
-            const interval = setInterval(function() {
-                // Update battery level
-                var req = new XMLHttpRequest();
-                req.open( "GET", "/battery", false);
-                req.send(null);
-                batteryLvlElem.innerHTML = escapeHtml(req.responseText);
-                // Update charger status
-                req = new XMLHttpRequest();
-                req.open( "GET", "/charging", false);
-                req.send(null);
-                if (req.responseText == "0") {
-                    isChargingElem.innerHTML = "Not charging";
-                } else {
-                    isChargingElem.innerHTML = "Charging";
-                }
-            }, 5000);
-            </script>'''
-            html_data += '\n</body>\n</html>'
-            print(f'Serving page:\n{html_data}')
-            self.send_header('Content-Length', len(html_data))
-            self.end_headers()
-            self.wfile.write(html_data.encode('ascii'))
-            return
-        
         elif self.path == '/stream':
             for k, v in self.__class__.HEADERS_BASE().items():
                 self.send_header(k, v)
@@ -195,6 +233,7 @@ class HttpHandler(http.server.BaseHTTPRequestHandler):
                     self.send_header(k, v)
                 self.end_headers()
                 self.wfile.write(frame.data)
+                suear_client.last_jpeg = bytes(frame.data)
                 if self.__class__.RENDER_RATE > 0 and frame.index % self.__class__.RENDER_RATE == 0:
                     frame.render()
                 
@@ -301,6 +340,10 @@ class SuearClient:
     FRAME_CHUNK_SZ = 1456
     UDP_READ_SZ = 8192
     FRAME_QUEUE_MAX = 8
+    CMD_TIMEOUT_S = 0.5
+    CMD_ATTEMPTS = 4
+    LED_CAMERA = 0x01   # LED id of the camera ring light
+    LED_WRITE = 0x10    # OR-ed into the LED id to write instead of read
     # If no stream data arrives for this many seconds, get_frame()
     # automatically disconnects and reconnects instead of hanging forever
     # (the original blocking recv_into() had no timeout at all, so any
@@ -320,6 +363,14 @@ class SuearClient:
         self.command_sock = None
         self.stream_socks = []
         self._last_recv_at = 0.0
+        # Request/reply pairs on the command socket are serialised: the HTTP
+        # server is threaded, so battery polling, LED control and the stream
+        # handler could otherwise steal each other's UDP replies.
+        self._cmd_lock = threading.RLock()
+        self.last_jpeg = None
+        # Latest accelerometer sample from the video chunk headers
+        self.accel = None
+        self.accel_at = 0.0
         self.stream_buf = memoryview(bytearray(self.__class__.UDP_READ_SZ))
         self.streaming = False
         self.frame_queue = queue.Queue()
@@ -425,6 +476,9 @@ class SuearClient:
                         break
 
                     msg = suear_struct.SuearUdpMsg_StreamChunk.from_bytes(data)
+                    if msg.has_accel:
+                        self.accel = int(msg.accel)
+                        self.accel_at = time.time()
                     read_sz = self.__class__.FRAME_CHUNK_SZ
                     data = buf[offs:offs+read_sz]
                     offs += len(data)
@@ -514,9 +568,25 @@ class SuearClient:
         #print(f'\n[Client -> {self.server}:{port}]\n{msg.type_name} {msg}\n{msg.data}\n')
         
         server_address = (self.server, port)
-        sock.sendto(bytes(msg), server_address)
-        response_data, server = sock.recvfrom(0x1000)#msg.sizeof())
-        assert server[0] == self.server, f'Response from unknown host {server[0]}'
+        with self._cmd_lock:
+            sock.settimeout(self.__class__.CMD_TIMEOUT_S)
+            response_data = None
+            for attempt in range(self.__class__.CMD_ATTEMPTS):
+                sock.sendto(bytes(msg), server_address)
+                try:
+                    while True:
+                        response_data, server = sock.recvfrom(0x1000)
+                        if server[0] != self.server or len(response_data) < msg.__class__.sizeof():
+                            continue
+                        # Skip late replies to earlier requests of a different type
+                        if int.from_bytes(response_data[6:8], 'little') != msg.type:
+                            continue
+                        break
+                    break
+                except socket.timeout:
+                    response_data = None
+            if response_data is None:
+                raise TimeoutError(f'No reply from {self.server}:{port} for command {msg.type:#06x}')
         response = msg.__class__.from_bytes(response_data[:msg.__class__.sizeof()])
         response_data = response_data[msg.__class__.sizeof():]
         if response.length > 0:
@@ -618,6 +688,73 @@ class SuearClient:
     @property
     def capacity(self):
         return self.device_info(update=False).capacity
+
+
+    def led(self, on=None, brightness=None):
+        """
+        Ring light control, command 0x000A on UDP/10005.
+
+        Payload (request and reply): u8 led_id | u8 status | u8 brightness
+          led_id:     0x01 = camera ring light; OR 0x10 to write instead of read
+          status:     0 = off, 1 = on (2 = blink, 3 = breathe also exist)
+          brightness: 0..100 (the vendor app only ever writes 100 or 0; many
+                      units don't actually dim)
+        The reply carries the resulting state in the same layout.
+
+        Call without arguments to read the current state.
+        Sources: alexbrickwedde/otoscope (I4seasonProtocol.kt), jduanen/EarCam
+        """
+        if on is None:
+            payload = bytes([self.__class__.LED_CAMERA, 0, 0])
+        else:
+            if brightness is None:
+                brightness = 100 if on else 0
+            brightness = max(0, min(100, int(brightness)))
+            payload = bytes([self.__class__.LED_WRITE | self.__class__.LED_CAMERA, 1 if on else 0, brightness])
+        msg = b'\xee\xff\xee\xff\x00\x00\x0a\x00\x01\x00\x00\x00' + payload
+        response = self.send_command(msg)
+        data = bytes(response.data)
+        if response.err_code != 0 or len(data) < 3:
+            raise IOError(f'LED command rejected: err={response.err_code}, data={data!r}')
+        return {'on': bool(data[1]), 'mode': int(data[1]), 'brightness': int(data[2])}
+
+
+    def position(self):
+        """Latest accelerometer sample decoded to roll/tilt (None until video is streaming)"""
+        if self.accel is None:
+            return {'available': False}
+        x, y, z = accel_xyz(self.accel)
+        roll = roll_degrees(self.accel)
+        offset = mount_offset_degrees(self.device_info(update=False).product_id) if self._device_info else 0.0
+        return {
+            'available': True,
+            'raw': self.accel,
+            'x': x, 'y': y, 'z': z,
+            'roll': None if roll is None else (roll + offset) % 360.0,
+            'roll_raw': roll,
+            'slope': slope_degrees(self.accel),
+            'mount_offset': offset,
+            'age_ms': int((time.time() - self.accel_at) * 1000),
+        }
+
+
+    def status(self):
+        info = self.device_info(update=True)
+        try:
+            led = self.led()
+        except Exception:
+            led = None
+        return {
+            'vendor': info.vendor,
+            'model': info.product_id,
+            'version': info.fw_version,
+            'ssid': info.ssid,
+            'serial': self.serial_num,
+            'battery': int(info.battery),
+            'charging': bool(info.is_charging),
+            'led': led,
+            'streaming': self.streaming,
+        }
         
         
         

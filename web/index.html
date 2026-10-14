@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Soulear Kamera</title>
+<style>
+  :root {
+    --bg: #0f1113;
+    --panel: #171a1d;
+    --panel-2: #1e2226;
+    --line: #2a2f35;
+    --text: #e8eaed;
+    --muted: #8b939c;
+    --accent: #f4b740;        /* warmes Ringlicht-Gelb */
+    --accent-ink: #1b1405;
+    --ok: #4cc38a;
+    --warn: #e5a03a;
+    --bad: #e5604f;
+    --radius: 14px;
+    --gap: 12px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3f2ef;
+      --panel: #ffffff;
+      --panel-2: #f7f6f3;
+      --line: #e1ded8;
+      --text: #1d1f22;
+      --muted: #6a7178;
+      --accent: #d99413;
+      --accent-ink: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    min-height: 100vh;
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: var(--gap); }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  header h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: .01em; }
+  header h1 small { color: var(--muted); font-weight: 450; margin-left: 6px; }
+  .conn { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.bad { background: var(--bad); }
+
+  /* ---------- Video ---------- */
+  .stage {
+    position: relative;
+    width: 100%;
+    /* so groß wie möglich, aber Bedienelemente bleiben auf Laptop-Höhe sichtbar */
+    height: min(calc(100vw - 32px), calc(100vh - 230px));
+    min-height: 260px;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+  }
+  .stage img {
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: 1 / 1;
+    height: 100%;
+    object-fit: contain;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .stage.round img { clip-path: circle(50% at 50% 50%); }
+  .stage .overlay {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: var(--muted); font-size: 14px; pointer-events: none; text-align: center; padding: 20px;
+  }
+  .stage .overlay[hidden] { display: none; }
+  .stage .hud {
+    position: absolute; left: 12px; top: 12px; display: flex; gap: 6px; flex-wrap: wrap;
+    pointer-events: none;
+  }
+  .chip {
+    background: rgba(0,0,0,.55); color: #fff; backdrop-filter: blur(6px);
+    border-radius: 999px; padding: 4px 10px; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .stage:fullscreen { height: 100vh; border-radius: 0; border: 0; }
+
+  /* ---------- Buttons ---------- */
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn {
+    appearance: none; border: 1px solid var(--line); background: var(--panel);
+    color: var(--text); border-radius: 10px; padding: 10px 14px; min-height: 44px;
+    font: inherit; font-weight: 550; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+    transition: background .15s, border-color .15s, transform .05s;
+  }
+  .btn:hover { background: var(--panel-2); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn svg { width: 18px; height: 18px; flex: none; }
+  .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.primary { flex: 1 1 160px; justify-content: center; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .spacer { flex: 1 1 0; }
+
+  .slider {
+    display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 0 14px; min-height: 44px; flex: 1 1 220px; color: var(--muted); font-size: 13px;
+  }
+  .slider input { flex: 1; accent-color: var(--accent); }
+  .slider output { min-width: 3.5ch; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* ---------- Info-Karten ---------- */
+  .cards { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+  .battery { display: flex; align-items: center; gap: 12px; }
+  .battery .big { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .bar { flex: 1; height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .4s; }
+  .bar.low > i { background: var(--bad); }
+  .bar.mid > i { background: var(--warn); }
+
+  .orient { display: flex; align-items: center; gap: 16px; }
+  .dial { width: 74px; height: 74px; flex: none; }
+  .dial circle { fill: none; stroke: var(--line); stroke-width: 2; }
+  .dial .needle { stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+  .dial .tick { stroke: var(--muted); stroke-width: 2; }
+  .orient dl { flex: 1; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px);
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; max-width: calc(100vw - 32px);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 560px) {
+    .stage { height: calc(100vw - 32px); }
+    .btn .lbl-long { display: none; }
+    .btn { padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Soulear Kamera <small id="model">–</small></h1>
+    <span class="conn"><span class="dot" id="connDot"></span><span id="connText">verbinde…</span></span>
+  </header>
+
+  <div class="stage" id="stage">
+    <img id="video" alt="Live-Bild der Kamera">
+    <div class="overlay" id="overlay">Warte auf Videostream…</div>
+    <div class="hud"><span class="chip" id="hudRes">–</span><span class="chip" id="hudRoll" hidden>0°</span></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="btnLed" aria-pressed="false" title="Ringlicht an/aus (L)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg>
+      <span>Licht <span id="ledState">–</span></span>
+    </button>
+    <button class="btn primary" id="btnSnap" title="Foto speichern (Leertaste)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      <span>Foto</span>
+    </button>
+    <button class="btn" id="btnRotate" aria-pressed="true" title="Bild mit dem Lagesensor mitdrehen (R)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>
+      <span>Auto<span class="lbl-long">-Rotation</span></span>
+    </button>
+    <button class="btn" id="btnCal" title="Aktuelle Lage als „oben“ festlegen (C)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+      <span>Ausrichten</span>
+    </button>
+    <button class="btn" id="btnDir" aria-pressed="false" title="Drehrichtung umkehren">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg>
+      <span>Richtung</span>
+    </button>
+    <button class="btn" id="btnMirror" aria-pressed="false" title="Horizontal spiegeln (M)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M9 7 4 12l5 5zM15 7l5 5-5 5z"/></svg>
+      <span>Spiegeln</span>
+    </button>
+    <button class="btn" id="btnRound" aria-pressed="false" title="Runde Maske">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
+      <span>Rund</span>
+    </button>
+    <button class="btn" id="btnFull" title="Vollbild (F)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      <span class="lbl-long">Vollbild</span>
+    </button>
+    <label class="slider" title="Helligkeit des Ringlichts – nicht jedes Modell dimmt wirklich">
+      Helligkeit
+      <input type="range" id="ledLevel" min="5" max="100" step="5" value="100">
+      <output id="ledLevelOut">100%</output>
+    </label>
+  </div>
+
+  <div class="cards">
+    <section class="card">
+      <h2>Akku</h2>
+      <div class="battery">
+        <span class="big"><span id="battery">–</span><small style="font-size:15px;color:var(--muted)">%</small></span>
+        <div class="bar" id="batteryBar"><i></i></div>
+      </div>
+      <dl style="margin-top:10px"><dt>Status</dt><dd id="charging">–</dd></dl>
+    </section>
+
+    <section class="card">
+      <h2>Lagesensor</h2>
+      <div class="orient">
+        <svg class="dial" viewBox="-40 -40 80 80" aria-hidden="true">
+          <circle r="34"/>
+          <line class="tick" x1="0" y1="-34" x2="0" y2="-28"/>
+          <line class="needle" id="needle" x1="0" y1="6" x2="0" y2="-26"/>
+          <circle r="3" style="fill:var(--accent);stroke:none"/>
+        </svg>
+        <dl>
+          <dt>Drehung</dt><dd id="roll">–</dd>
+          <dt>Neigung</dt><dd id="slope">–</dd>
+          <dt>x / y / z</dt><dd id="xyz">–</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Gerät</h2>
+      <dl>
+        <dt>Hersteller</dt><dd id="vendor">–</dd>
+        <dt>Modell</dt><dd id="product">–</dd>
+        <dt>Firmware</dt><dd id="version">–</dd>
+        <dt>Seriennr.</dt><dd id="serial">–</dd>
+        <dt>WLAN</dt><dd id="ssid">–</dd>
+      </dl>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+
+  /* ---------- kleine Helfer ---------- */
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("suear." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("suear." + k, JSON.stringify(v)); } catch {} },
+  };
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+  }
+  async function getJSON(url) {
+    const r = await fetch(url, { cache: "no-store" });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("HTTP " + r.status));
+    return body;
+  }
+  const fmt = (v, d = 0) => (typeof v === "number" && isFinite(v)) ? v.toFixed(d) : "–";
+
+  /* ---------- Zustand ---------- */
+  const state = {
+    autoRotate: store.get("autoRotate", true),
+    invert: store.get("invert", false),
+    mirror: store.get("mirror", false),
+    round: store.get("round", false),
+    offset: store.get("offset", 0),
+    led: null,
+    roll: null,          // letzter Rohwert vom Server [0,360)
+    unwrapped: null,     // fortlaufender Winkel ohne 360°-Sprünge
+    target: null,        // nach Totzone
+    shown: 0,            // geglättet, wird angezeigt
+  };
+
+  /* ---------- Video ---------- */
+  const video = $("video"), overlay = $("overlay");
+  let streamRetry;
+  function startStream() {
+    clearTimeout(streamRetry);
+    video.src = "/stream?t=" + Date.now();
+  }
+  video.addEventListener("load", () => { overlay.hidden = true; });
+  video.addEventListener("error", () => {
+    overlay.hidden = false; overlay.textContent = "Kein Videostream – neuer Versuch…";
+    streamRetry = setTimeout(startStream, 2500);
+  });
+  setInterval(() => {
+    if (video.naturalWidth) {
+      overlay.hidden = true;
+      $("hudRes").textContent = video.naturalWidth + "×" + video.naturalHeight;
+    }
+  }, 1000);
+  startStream();
+
+  /* ---------- Rotation (Lagesensor) ---------- */
+  const DEADBAND = 0.8;   // Grad – Sensorrauschen ignorieren
+  const TAU = 90;         // ms – Glättung
+  function applyTransform() {
+    let deg = 0;
+    if (state.autoRotate && state.target !== null) {
+      deg = (state.invert ? state.shown : -state.shown) + state.offset;
+    }
+    video.style.transform = (state.mirror ? "scaleX(-1) " : "") + "rotate(" + deg.toFixed(2) + "deg)";
+    $("stage").classList.toggle("round", state.round);
+  }
+  function feedRoll(r) {
+    if (r === null || r === undefined) return;
+    if (state.unwrapped === null) {
+      state.unwrapped = state.target = state.shown = r;
+    } else {
+      let d = r - state.roll;
+      if (d > 180) d -= 360; else if (d < -180) d += 360;
+      state.unwrapped += d;
+      if (Math.abs(state.unwrapped - state.target) > DEADBAND) state.target = state.unwrapped;
+    }
+    state.roll = r;
+  }
+  let lastTick = performance.now();
+  function tick(now) {
+    const dt = Math.min(100, now - lastTick); lastTick = now;
+    if (state.target !== null) {
+      state.shown += (state.target - state.shown) * (1 - Math.exp(-dt / TAU));
+      applyTransform();
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  async function pollPosition() {
+    try {
+      const p = await getJSON("/position");
+      if (p.available) {
+        feedRoll(p.roll);
+        $("roll").textContent = p.roll === null ? "senkrecht" : fmt(p.roll) + "°";
+        $("slope").textContent = fmt(p.slope) + "°";
+        $("xyz").textContent = p.x + " / " + p.y + " / " + p.z;
+        $("needle").setAttribute("transform", "rotate(" + fmt(p.roll ?? 0, 1) + ")");
+        const hud = $("hudRoll"); hud.hidden = false; hud.textContent = (p.roll === null ? "–" : fmt(p.roll)) + "°";
+      }
+    } catch {}
+    setTimeout(pollPosition, 100);
+  }
+  pollPosition();
+
+  /* ---------- Status / Akku ---------- */
+  function setConn(ok, text) {
+    $("connDot").className = "dot " + (ok ? "ok" : "bad");
+    $("connText").textContent = text;
+  }
+  async function pollStatus() {
+    try {
+      const s = await getJSON("/status");
+      setConn(true, "verbunden");
+      $("model").textContent = s.model || "";
+      $("vendor").textContent = s.vendor || "–";
+      $("product").textContent = s.model || "–";
+      $("version").textContent = s.version || "–";
+      $("serial").textContent = s.serial || "–";
+      $("ssid").textContent = s.ssid || "–";
+      $("battery").textContent = s.battery;
+      $("charging").textContent = s.charging ? "lädt" : "Akkubetrieb";
+      const bar = $("batteryBar");
+      bar.firstElementChild.style.width = Math.max(0, Math.min(100, s.battery)) + "%";
+      bar.classList.toggle("low", s.battery < 20);
+      bar.classList.toggle("mid", s.battery >= 20 && s.battery < 45);
+      if (s.led) setLed(s.led);
+      else $("ledState").textContent = "?";
+    } catch (e) {
+      setConn(false, "Kamera nicht erreichbar");
+    }
+    setTimeout(pollStatus, 5000);
+  }
+  pollStatus();
+
+  /* ---------- LED ---------- */
+  function setLed(l) {
+    state.led = l;
+    $("btnLed").setAttribute("aria-pressed", String(!!l.on));
+    $("ledState").textContent = l.on ? "an" : "aus";
+    if (l.on && l.brightness) { $("ledLevel").value = l.brightness; $("ledLevelOut").textContent = l.brightness + "%"; }
+  }
+  async function sendLed(on, brightness) {
+    const btn = $("btnLed"); btn.disabled = true;
+    try {
+      let url = "/led?on=" + (on ? 1 : 0);
+      if (on && brightness) url += "&brightness=" + brightness;
+      setLed(await getJSON(url));
+    } catch (e) { toast("LED: " + e.message); }
+    finally { btn.disabled = false; }
+  }
+  $("btnLed").addEventListener("click", () => sendLed(!(state.led && state.led.on), +$("ledLevel").value));
+  $("ledLevel").addEventListener("input", e => { $("ledLevelOut").textContent = e.target.value + "%"; });
+  $("ledLevel").addEventListener("change", e => sendLed(true, +e.target.value));
+
+  /* ---------- Toggles ---------- */
+  function bindToggle(id, key, after) {
+    const b = $(id);
+    b.setAttribute("aria-pressed", String(!!state[key]));
+    b.addEventListener("click", () => {
+      state[key] = !state[key]; store.set(key, state[key]);
+      b.setAttribute("aria-pressed", String(state[key]));
+      after && after();
+      applyTransform();
+    });
+  }
+  bindToggle("btnRotate", "autoRotate");
+  bindToggle("btnDir", "invert");
+  bindToggle("btnMirror", "mirror");
+  bindToggle("btnRound", "round");
+  $("btnCal").addEventListener("click", () => {
+    if (state.target === null) { toast("Noch keine Lagedaten"); return; }
+    state.offset = state.invert ? -state.shown : state.shown;
+    state.offset = ((state.offset % 360) + 360) % 360;
+    store.set("offset", state.offset);
+    toast("Ausgerichtet – aktuelle Lage ist jetzt „oben“");
+  });
+
+  /* ---------- Foto ---------- */
+  async function snapshot() {
+    try {
+      const r = await fetch("/snapshot", { cache: "no-store" });
+      if (!r.ok) throw new Error("noch kein Bild");
+      const blob = await r.blob();
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+      a.href = URL.createObjectURL(blob); a.download = "soulear_" + ts + ".jpg";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast("Foto gespeichert");
+    } catch (e) { toast("Foto: " + e.message); }
+  }
+  $("btnSnap").addEventListener("click", snapshot);
+
+  /* ---------- Vollbild ---------- */
+  $("btnFull").addEventListener("click", () => {
+    const st = $("stage");
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (st.requestFullscreen) st.requestFullscreen();
+  });
+
+  /* ---------- Tastatur ---------- */
+  document.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "l") $("btnLed").click();
+    else if (k === " ") { e.preventDefault(); snapshot(); }
+    else if (k === "r") $("btnRotate").click();
+    else if (k === "m") $("btnMirror").click();
+    else if (k === "c") $("btnCal").click();
+    else if (k === "f") $("btnFull").click();
+  });
+
+  applyTransform();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+[Unit]
+Description=Soulear Camera Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/Soulearwormserver/suear_mirror.py --no-ssl
+WorkingDirectory=/home/pi/Soulearwormserver
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
